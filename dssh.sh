@@ -17,15 +17,15 @@ aws ecs list-tasks > /tmp/tasks.json
 echo " " && echo ">> Fetching all tasks"
 jq .taskArns[] /tmp/tasks.json | aws ecs describe-tasks --tasks $(sed -E 's/^\".*\/(.*)\"/\1/') > /tmp/task-details.json
 
-# Copy the ARNs of the tasks out to file
+# For each task extract the task definition ARN out to file
 jq .tasks[].taskDefinitionArn /tmp/task-details.json | sed -E 's/^\"(.*)\"/\1/' > /tmp/task-definition-arns.txt
 
-# Find which task we want
+# Find which task and task definition we want
 CONTAINER_FOUND=0
 for arn in `cat /tmp/task-definition-arns.txt`; do
-  # Load specific task details
+  # Load specific task definition details (it's the definition that contains the listening URL info)
   aws ecs describe-task-definition --task-definition $arn > /tmp/task.json
-  # Load the URL of this task's specific container
+  # Load the URL tasks created by this task definition will listen on
   ENVIRONMENT_URL=$(jq '.taskDefinition.containerDefinitions[].environment[] | select(.name=="DOMAIN") | .value' /tmp/task.json | sed -E 's/^\"(.*)\"/\1/')
 
   # Check if the URL matches the one we're looking for
@@ -33,7 +33,8 @@ for arn in `cat /tmp/task-definition-arns.txt`; do
     CONTAINER_FOUND=1
     echo " " && echo ">> Matching task found, looking up EC2 instance for container with URL ${ENVIRONMENT_URL}" && echo " "
 
-    # Look up the ECS container instance ID (not the same as the EC2 instance ID)
+    # Look up the ECS container instance ID (not the same as the EC2 instance ID) in our running task matching this task definition
+    # IMPORTANT: we assume one task per task definition for our purposes, but this may not be the case in all environments
     ARN_STRING="\"$arn\""
     COMMAND="jq '.tasks[] | select(.taskDefinitionArn==${ARN_STRING}) | .containerInstanceArn' /tmp/task-details.json"
     EC2_ARN=$(eval $COMMAND)
@@ -44,16 +45,18 @@ for arn in `cat /tmp/task-definition-arns.txt`; do
     EC2_INSTANCE_ID=$(jq .containerInstances[].ec2InstanceId /tmp/container.json | sed -E 's/^\"(.*)\"/\1/')
     echo "EC2 Instance ID: ${EC2_INSTANCE_ID}"
 
-    # Look up the public IP address of the instance
+    # Look up the public IP address of the instance by calling the ec2 service with the instance ID
     aws ec2 describe-instances --instance-ids ${EC2_INSTANCE_ID} > /tmp/instance.json
     INSTANCE_IP=$(jq .Reservations[].Instances[].PublicIpAddress /tmp/instance.json | sed -E 's/^\"(.*)\"/\1/')
     echo "EC2 Instance IP address: ${INSTANCE_IP}" && echo " "
 
     # Use the local API on the EC2 instance to look up the Docker container ID
     echo ">> Looking up Docker container IP on host EC2 instance" && echo " "
+    # Need to get the task ARN, the ARN in this loop is the task *definition* ARN, different data
     COMMAND="jq '.tasks[] | select(.taskDefinitionArn==${ARN_STRING}) | .taskArn' /tmp/task-details.json"
     TASK_ARN=$(eval $COMMAND)
     TASK_ARN=$(echo $TASK_ARN | sed -E 's/^\"(.*)\"/\1/')
+    # SSH into the EC2 instance and hit the local introspective API to get the docker data
     COMMAND="ssh ec2-user@${INSTANCE_IP} 'curl http://localhost:51678/v1/tasks?taskarn=${TASK_ARN}' > /tmp/docker-container.json"
     eval $COMMAND
     DOCKER_ID=$(jq .Containers[].DockerId /tmp/docker-container.json | sed -E 's/^\"(.*)\"/\1/')
@@ -76,7 +79,7 @@ for arn in `cat /tmp/task-definition-arns.txt`; do
     echo "  docker exec -it ${DOCKER_ID} bash"
     echo " " && echo "######################################################" && echo " "
 
-    # Login to the EC2 instance
+    # Login to the EC2 instance so we're ready to roll!
     ssh -t ec2-user@${INSTANCE_IP} '/bin/bash'
     exit
   fi
