@@ -1,19 +1,20 @@
 #!/bin/bash
 
-#########################################
-# This script finds the correct instance
-# for a given container environment URL
-# and logs the user in, providing the
-# Docker command for logging into the
+##############################################################################
+# This script finds the correct instance for a given container environment URL
+# and logs the user in, providing the Docker command for logging into the
 # container on the instance.
-#########################################
+#
+# See https://github.com/codeenigma/dssh
+#
+# Copyright Greg Harvey, 2016
+##############################################################################
 
 # Get a list of running tasks
 aws ecs list-tasks > /tmp/tasks.json
 
 # Get full details of running tasks
-echo " "
-echo ">> Fetching all tasks"
+echo " " && echo ">> Fetching all tasks"
 jq .taskArns[] /tmp/tasks.json | aws ecs describe-tasks --tasks $(sed -E 's/^\".*\/(.*)\"/\1/') > /tmp/task-details.json
 
 # Copy the ARNs of the tasks out to file
@@ -22,14 +23,15 @@ jq .tasks[].taskDefinitionArn /tmp/task-details.json | sed -E 's/^\"(.*)\"/\1/' 
 # Find which task we want
 CONTAINER_FOUND=0
 for arn in `cat /tmp/task-definition-arns.txt`; do
+  # Load specific task details
   aws ecs describe-task-definition --task-definition $arn > /tmp/task.json
+  # Load the URL of this task's specific container
   ENVIRONMENT_URL=$(jq '.taskDefinition.containerDefinitions[].environment[] | select(.name=="DOMAIN") | .value' /tmp/task.json | sed -E 's/^\"(.*)\"/\1/')
 
+  # Check if the URL matches the one we're looking for
   if [ "$ENVIRONMENT_URL" == "$1" ]; then
     CONTAINER_FOUND=1
-    echo " "
-    echo ">> Matching task found, looking up EC2 instance for container with URL ${ENVIRONMENT_URL}"
-    echo " "
+    echo " " && echo ">> Matching task found, looking up EC2 instance for container with URL ${ENVIRONMENT_URL}" && echo " "
 
     # Look up the ECS container instance ID (not the same as the EC2 instance ID)
     ARN_STRING="\"$arn\""
@@ -45,23 +47,19 @@ for arn in `cat /tmp/task-definition-arns.txt`; do
     # Look up the public IP address of the instance
     aws ec2 describe-instances --instance-ids ${EC2_INSTANCE_ID} > /tmp/instance.json
     INSTANCE_IP=$(jq .Reservations[].Instances[].PublicIpAddress /tmp/instance.json | sed -E 's/^\"(.*)\"/\1/')
-    echo "EC2 Instance IP address: ${INSTANCE_IP}"
-    echo " "
+    echo "EC2 Instance IP address: ${INSTANCE_IP}" && echo " "
 
     # Use the local API on the EC2 instance to look up the Docker container ID
-    echo ">> Looking up Docker container IP on host EC2 instance"
-    echo " "
+    echo ">> Looking up Docker container IP on host EC2 instance" && echo " "
     COMMAND="jq '.tasks[] | select(.taskDefinitionArn==${ARN_STRING}) | .taskArn' /tmp/task-details.json"
     TASK_ARN=$(eval $COMMAND)
     TASK_ARN=$(echo $TASK_ARN | sed -E 's/^\"(.*)\"/\1/')
     COMMAND="ssh ec2-user@${INSTANCE_IP} 'curl http://localhost:51678/v1/tasks?taskarn=${TASK_ARN}' > /tmp/docker-container.json"
     eval $COMMAND
     DOCKER_ID=$(jq .Containers[].DockerId /tmp/docker-container.json | sed -E 's/^\"(.*)\"/\1/')
-    echo " "
-    echo "Docker Container ID: ${DOCKER_ID}"
-    echo " "
+    echo " " && echo "Docker Container ID: ${DOCKER_ID}" && echo " "
 
-    # Clean up all the other files we made
+    # Clean up all the files we made
     echo ">> Clearing up"
     rm /tmp/task.json
     rm /tmp/tasks.json
@@ -72,17 +70,11 @@ for arn in `cat /tmp/task-definition-arns.txt`; do
     rm /tmp/docker-container.json
 
     # Write some instructions to the end user
-    echo " "
-    echo "#######################################################"
-    echo " "
+    echo " " && echo "#######################################################" && echo " "
     echo ">> YOU ARE NOW LOGGED INTO THE CORRECT EC2 INSTANCE! <<"
-    echo " "
-    echo "Copy and paste this command into the bash prompt:"
-    echo " "
+    echo " " && echo "Copy and paste this command into the bash prompt:" && echo " "
     echo "  docker exec -it ${DOCKER_ID} bash"
-    echo " "
-    echo "######################################################"
-    echo " "
+    echo " " && echo "######################################################" && echo " "
 
     # Login to the EC2 instance
     ssh -t ec2-user@${INSTANCE_IP} '/bin/bash'
@@ -92,8 +84,7 @@ done
 
 if [ $CONTAINER_FOUND == 0 ]; then
   # We didn't find a matching container
-  echo ">> No matching container found!"
-  echo " "
+  echo ">> No matching container found!" && echo " "
 fi
 
 # Clean up all the files we made
