@@ -5,7 +5,9 @@
 # and logs the user in, providing the Docker command for logging into the
 # container on the instance.
 #
-# See https://github.com/codeenigma/dssh
+# See: https://github.com/codeenigma/dssh
+#
+# 'jq' documentation: https://stedolan.github.io/jq/manual/
 #
 # Copyright Greg Harvey, 2016
 ##############################################################################
@@ -51,12 +53,14 @@ for arn in `cat /tmp/task-definition-arns.txt`; do
     echo "EC2 Instance IP address: ${INSTANCE_IP}" && echo " "
 
     # Use the local API on the EC2 instance to look up the Docker container ID
+    # @TODO: consider using ecs-cli for this: http://docs.aws.amazon.com/AmazonECS/latest/developerguide/cmd-ecs-cli-ps.html
     echo ">> Looking up Docker container IP on host EC2 instance" && echo " "
     # Need to get the task ARN, the ARN in this loop is the task *definition* ARN, different data
     COMMAND="jq '.tasks[] | select(.taskDefinitionArn==${ARN_STRING}) | .taskArn' /tmp/task-details.json"
     TASK_ARN=$(eval $COMMAND)
     TASK_ARN=$(echo $TASK_ARN | sed -E 's/^\"(.*)\"/\1/')
     # SSH into the EC2 instance and hit the local introspective API to get the docker data
+    # See: http://docs.aws.amazon.com/AmazonECS/latest/developerguide/ecs-agent-introspection.html
     COMMAND="ssh ec2-user@${INSTANCE_IP} 'curl http://localhost:51678/v1/tasks?taskarn=${TASK_ARN}' > /tmp/docker-container.json"
     eval $COMMAND
     DOCKER_ID=$(jq .Containers[].DockerId /tmp/docker-container.json | sed -E 's/^\"(.*)\"/\1/')
