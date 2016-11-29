@@ -23,7 +23,6 @@ jq .taskArns[] /tmp/tasks.json | aws ecs describe-tasks --tasks $(sed -E 's/^\".
 jq .tasks[].taskDefinitionArn /tmp/task-details.json | sed -E 's/^\"(.*)\"/\1/' > /tmp/task-definition-arns.txt
 
 # Find which task and task definition we want
-CONTAINER_FOUND=0
 for arn in `cat /tmp/task-definition-arns.txt`; do
   # Load specific task definition details (it's the definition that contains the listening URL info)
   aws ecs describe-task-definition --task-definition $arn > /tmp/task.json
@@ -32,7 +31,6 @@ for arn in `cat /tmp/task-definition-arns.txt`; do
 
   # Check if the URL matches the one we're looking for
   if [ "$ENVIRONMENT_URL" == "$1" ]; then
-    CONTAINER_FOUND=1
     echo " " && echo ">> Matching task found, looking up EC2 instance for container with URL ${ENVIRONMENT_URL}" && echo " "
 
     # Look up the ECS container instance ID (not the same as the EC2 instance ID) in our running task matching this task definition
@@ -89,13 +87,11 @@ for arn in `cat /tmp/task-definition-arns.txt`; do
   fi
 done
 
-if [ $CONTAINER_FOUND == 0 ]; then
-  # We didn't find a matching container
-  echo ">> No matching container found!" && echo " "
-fi
+# We didn't find a matching container
+echo ">> No matching container found!" && echo " "
 
 # Clean up all the files we made
-echo ">> Clearing up"
+echo ">> Clearing up" && echo " "
 rm /tmp/task.json
 rm /tmp/tasks.json
 rm /tmp/task-details.json
